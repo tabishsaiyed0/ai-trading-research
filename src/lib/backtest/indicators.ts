@@ -28,33 +28,30 @@ export function ema(values: number[], period: number): (number | null)[] {
 
 export function rsi(values: number[], period = 14): (number | null)[] {
   const out: (number | null)[] = Array(values.length).fill(null);
-  let gains = 0, losses = 0;
-  for (let i = 1; i < values.length; i++) {
+  if (values.length <= period) return out;
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i++) {
     const diff = values[i] - values[i - 1];
-    if (i <= period) {
-      if (diff > 0) gains += diff; else losses -= diff;
-      if (i === period) {
-        const avgGain = gains / period;
-        const avgLoss = losses / period;
-        out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-        // store for Wilder smoothing
-        (out as unknown as { _avgGain: number; _avgLoss: number })._avgGain = avgGain;
-        (out as unknown as { _avgLoss: number })._avgLoss = avgLoss;
-      }
-    } else {
-      const prev = out as unknown as { _avgGain: number; _avgLoss: number };
-      let avgGain = prev._avgGain;
-      let avgLoss = prev._avgLoss;
-      const gain = diff > 0 ? diff : 0;
-      const loss = diff < 0 ? -diff : 0;
-      avgGain = (avgGain * (period - 1) + gain) / period;
-      avgLoss = (avgLoss * (period - 1) + loss) / period;
-      prev._avgGain = avgGain;
-      prev._avgLoss = avgLoss;
-      out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    }
+    if (diff > 0) gains += diff;
+    else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   }
   return out;
+}
+
+function normalizeKey(expr: string): string {
+  return expr.trim().toUpperCase();
 }
 
 export function computeSeries(
@@ -64,29 +61,32 @@ export function computeSeries(
 ): (number | null)[] {
   const e = expr.trim();
   // numeric literal
-  if (!isNaN(Number(e))) return Array(close.length).fill(Number(e));
-  if (e === "close") return [...close];
+  if (e !== "" && !isNaN(Number(e))) return Array(close.length).fill(Number(e));
+  if (e.toLowerCase() === "close") return [...close];
+
+  const key = normalizeKey(e);
+  if (cache[key]) return cache[key];
 
   const smaMatch = e.match(/^SMA\((\d+)\)$/i);
   if (smaMatch) {
     const p = Number(smaMatch[1]);
-    const key = `SMA(${p})`;
-    if (!cache[key]) cache[key] = sma(close, p);
-    return cache[key];
+    const arr = sma(close, p);
+    cache[key] = arr;
+    return arr;
   }
   const emaMatch = e.match(/^EMA\((\d+)\)$/i);
   if (emaMatch) {
     const p = Number(emaMatch[1]);
-    const key = `EMA(${p})`;
-    if (!cache[key]) cache[key] = ema(close, p);
-    return cache[key];
+    const arr = ema(close, p);
+    cache[key] = arr;
+    return arr;
   }
   const rsiMatch = e.match(/^RSI\((\d+)\)$/i);
   if (rsiMatch) {
     const p = Number(rsiMatch[1]);
-    const key = `RSI(${p})`;
-    if (!cache[key]) cache[key] = rsi(close, p);
-    return cache[key];
+    const arr = rsi(close, p);
+    cache[key] = arr;
+    return arr;
   }
-  throw new Error(`Unknown indicator expr: ${expr}`);
+  throw new Error(`Unknown indicator expr: ${expr}. Supported: close, SMA(n), EMA(n), RSI(n) or numeric literal`);
 }

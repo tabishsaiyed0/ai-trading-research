@@ -22,9 +22,8 @@ function getRedis(): Redis {
     }
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForRedis.redis = client;
-  }
+  // cache singleton in all envs to avoid per-request clients in prod
+  globalForRedis.redis = client;
 
   return client;
 }

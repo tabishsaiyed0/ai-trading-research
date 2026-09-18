@@ -15,11 +15,16 @@ function evalCondition(
   if (l == null || r == null) return false;
 
   switch (cond.operator) {
-    case ">": return l > r;
-    case "<": return l < r;
-    case ">=": return l >= r;
-    case "<=": return l <= r;
-    case "==": return Math.abs(l - r) < 1e-9;
+    case ">":
+      return l > r;
+    case "<":
+      return l < r;
+    case ">=":
+      return l >= r;
+    case "<=":
+      return l <= r;
+    case "==":
+      return Math.abs(l - r) < 1e-9;
     case "crosses_above": {
       const lPrev = leftSeries[idx - 1];
       const rPrev = rightSeries[idx - 1];
@@ -32,13 +37,40 @@ function evalCondition(
       if (lPrev == null || rPrev == null) return false;
       return lPrev >= rPrev && l < r;
     }
-    default: return false;
+    default:
+      return false;
   }
 }
 
-function evalLogic(conditions: Condition[], logic: "AND" | "OR", idx: number, close: number[], cache: Record<string, (number|null)[]>) {
-  const results = conditions.map(c => evalCondition(c, idx, close, cache));
+function evalLogic(
+  conditions: Condition[],
+  logic: "AND" | "OR",
+  idx: number,
+  close: number[],
+  cache: Record<string, (number | null)[]>
+) {
+  const results = conditions.map((c) => evalCondition(c, idx, close, cache));
   return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
+}
+
+function collectIndicatorExprs(strategy: Strategy): string[] {
+  const exprs = new Set<string>();
+  for (const ind of strategy.indicators) {
+    if (ind.type === "SMA") exprs.add(`SMA(${ind.period})`);
+    if (ind.type === "EMA") exprs.add(`EMA(${ind.period})`);
+    if (ind.type === "RSI") exprs.add(`RSI(${ind.period})`);
+    // MACD/BBANDS are validated at schema level; if reached here they are unsupported in engine
+  }
+  const allConds = [...strategy.entry.conditions, ...strategy.exit.conditions];
+  for (const c of allConds) {
+    for (const expr of [c.left, c.right]) {
+      const t = expr.trim();
+      if (t === "" || !isNaN(Number(t)) || t.toLowerCase() === "close") continue;
+      // capture SMA(n)/EMA(n)/RSI(n) patterns — normalize later in computeSeries
+      if (/^(SMA|EMA|RSI)\(\d+\)$/i.test(t)) exprs.add(t);
+    }
+  }
+  return [...exprs];
 }
 
 export function runBacktest(
@@ -46,13 +78,24 @@ export function runBacktest(
   ohlcv: OHLCV[],
   initialCapital = 10000
 ): BacktestResult {
-  const close = ohlcv.map(b => b.close);
-  const cache: Record<string, (number|null)[]> = {};
+  const close = ohlcv.map((b) => b.close);
+  const cache: Record<string, (number | null)[]> = {};
 
+  // Reject unsupported indicators early with actionable 400
   for (const ind of strategy.indicators) {
-    if (ind.type === "SMA") cache[`SMA(${ind.period})`] = computeSeries(close, `SMA(${ind.period})`, cache);
-    if (ind.type === "EMA") cache[`EMA(${ind.period})`] = computeSeries(close, `EMA(${ind.period})`, cache);
-    if (ind.type === "RSI") cache[`RSI(${ind.period})`] = computeSeries(close, `RSI(${ind.period})`, cache);
+    if (ind.type === "MACD" || ind.type === "BBANDS") {
+      throw new Error(`Indicator ${ind.type} is not yet supported by the backtest engine. Use SMA/EMA/RSI.`);
+    }
+  }
+
+  // Pre-warm all indicator series once (avoids per-bar per-condition recompute)
+  const exprs = collectIndicatorExprs(strategy);
+  for (const e of exprs) {
+    try {
+      computeSeries(close, e, cache);
+    } catch {
+      throw new Error(`Unsupported indicator expression in strategy: ${e}. Supported: close, SMA(n), EMA(n), RSI(n)`);
+    }
   }
 
   let equity = initialCapital;
@@ -67,7 +110,6 @@ export function runBacktest(
     const bar = ohlcv[i];
     const price = bar.close;
 
-   
     let curEquity = equity;
     if (position) {
       const unrealized = (price - position.entryPrice) * position.qty;
@@ -75,7 +117,7 @@ export function runBacktest(
     }
     equityCurve.push({ timestamp: bar.timestamp, equity: curEquity });
     if (curEquity > peak) peak = curEquity;
-    const dd = (peak - curEquity) / peak * 100;
+    const dd = peak === 0 ? 0 : ((peak - curEquity) / peak) * 100;
     if (dd > maxDD) maxDD = dd;
 
     if (position) {
@@ -85,7 +127,9 @@ export function runBacktest(
       const stopLoss = strategy.exit.stopLossPct;
       const takeProfit = strategy.exit.takeProfitPct;
       const trailing = strategy.exit.trailingStopPct;
-      let slHit = false, tpHit = false, trailHit = false;
+      let slHit = false,
+        tpHit = false,
+        trailHit = false;
       if (stopLoss != null) {
         const slPrice = position.entryPrice * (1 - stopLoss / 100);
         if (bar.low <= slPrice) slHit = true;
@@ -98,12 +142,13 @@ export function runBacktest(
         const trailPrice = position.peakPrice * (1 - trailing / 100);
         if (bar.low <= trailPrice) trailHit = true;
       }
+      // Exit priority: stop_loss > trailing_stop > take_profit > signal
       const exitReason = slHit ? "stop_loss" : trailHit ? "trailing_stop" : tpHit ? "take_profit" : shouldExit ? "signal" : null;
       if (exitReason) {
         let exitPrice = price;
-        if (slHit) exitPrice = position.entryPrice * (1 - (stopLoss as number)/100);
-        else if (trailHit) exitPrice = position.peakPrice * (1 - (trailing as number)/100);
-        else if (tpHit) exitPrice = position.entryPrice * (1 + (takeProfit as number)/100);
+        if (slHit) exitPrice = position.entryPrice * (1 - (stopLoss as number) / 100);
+        else if (trailHit) exitPrice = position.peakPrice * (1 - (trailing as number) / 100);
+        else if (tpHit) exitPrice = position.entryPrice * (1 + (takeProfit as number) / 100);
         const pnl = (exitPrice - position.entryPrice) * position.qty;
         equity += pnl;
         trades.push({
@@ -113,7 +158,7 @@ export function runBacktest(
           exitPrice,
           qty: position.qty,
           pnl,
-          pnlPct: (exitPrice - position.entryPrice)/position.entryPrice*100,
+          pnlPct: ((exitPrice - position.entryPrice) / position.entryPrice) * 100,
           exitReason,
           barsHeld: i - position.entryIdx,
         });
@@ -129,14 +174,17 @@ export function runBacktest(
         const sizing = strategy.positionSizing;
         let qty: number;
         if (sizing.type === "percent_equity") {
+          // value is % of equity to allocate as notional (e.g. 10 => 10% of equity)
           const notional = equity * (sizing.value / 100);
           qty = notional / price;
         } else if (sizing.type === "fixed") {
-          qty = sizing.value / price;
+          // value is number of shares (not cash). Keeps sizing deterministic across prices.
+          qty = sizing.value;
         } else {
-          qty = (equity * 0.1) / price; // kelly placeholder
+          // kelly: simplified as 10% equity until full Kelly (W - (1-W)/R) is implemented
+          qty = (equity * 0.1) / price;
         }
-        if (qty > 0) position = { entryIdx: i, entryPrice: price, qty, peakPrice: price };
+        if (qty > 0 && Number.isFinite(qty)) position = { entryIdx: i, entryPrice: price, qty, peakPrice: price };
       }
     }
   }
@@ -153,7 +201,7 @@ export function runBacktest(
       exitPrice: last.close,
       qty: position.qty,
       pnl,
-      pnlPct: (last.close - position.entryPrice)/position.entryPrice*100,
+      pnlPct: ((last.close - position.entryPrice) / position.entryPrice) * 100,
       exitReason: "eod",
       barsHeld: ohlcv.length - 1 - position.entryIdx,
     });
@@ -161,24 +209,24 @@ export function runBacktest(
 
   const finalEquity = equity;
   const totalReturnPct = (finalEquity - initialCapital) / initialCapital * 100;
-  const wins = trades.filter(t => t.pnl > 0);
-  const losses = trades.filter(t => t.pnl <= 0);
-  const winRate = trades.length ? wins.length / trades.length * 100 : 0;
-  const avgWin = wins.length ? wins.reduce((a,b)=>a+b.pnl,0)/wins.length : 0;
-  const avgLoss = losses.length ? losses.reduce((a,b)=>a+b.pnl,0)/losses.length : 0;
-  const grossProfit = wins.reduce((a,b)=>a+b.pnl,0);
-  const grossLoss = Math.abs(losses.reduce((a,b)=>a+b.pnl,0));
-  const profitFactor = grossLoss === 0 ? (grossProfit>0? Infinity : 0) : grossProfit/grossLoss;
+  const wins = trades.filter((t) => t.pnl > 0);
+  const losses = trades.filter((t) => t.pnl <= 0);
+  const winRate = trades.length ? (wins.length / trades.length) * 100 : 0;
+  const avgWin = wins.length ? wins.reduce((a, b) => a + b.pnl, 0) / wins.length : 0;
+  const avgLoss = losses.length ? losses.reduce((a, b) => a + b.pnl, 0) / losses.length : 0;
+  const grossProfit = wins.reduce((a, b) => a + b.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((a, b) => a + b.pnl, 0));
+  const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss;
 
   // sharpe (daily returns)
   const returns: number[] = [];
-  for (let i=1;i<equityCurve.length;i++) returns.push((equityCurve[i].equity - equityCurve[i-1].equity)/equityCurve[i-1].equity);
-  const mean = returns.length ? returns.reduce((a,b)=>a+b,0)/returns.length : 0;
-  const std = returns.length ? Math.sqrt(returns.reduce((a,b)=>a+(b-mean)**2,0)/returns.length) : 0;
-  const sharpe = std===0 ? 0 : (mean/std)*Math.sqrt(252);
+  for (let i = 1; i < equityCurve.length; i++) returns.push((equityCurve[i].equity - equityCurve[i - 1].equity) / equityCurve[i - 1].equity);
+  const mean = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+  const std = returns.length ? Math.sqrt(returns.reduce((a, b) => a + (b - mean) ** 2, 0) / returns.length) : 0;
+  const sharpe = std === 0 ? 0 : (mean / std) * Math.sqrt(252);
 
   const years = ohlcv.length / 252;
-  const cagrPct = years>0 ? (Math.pow(finalEquity/initialCapital, 1/years)-1)*100 : 0;
+  const cagrPct = years > 0 ? (Math.pow(finalEquity / initialCapital, 1 / years) - 1) * 100 : 0;
 
   return {
     strategyName: strategy.name,
@@ -189,7 +237,7 @@ export function runBacktest(
     maxDrawdownPct: maxDD,
     sharpe,
     winRate,
-    profitFactor: Number.isFinite(profitFactor) ? profitFactor : 0,
+    profitFactor,
     totalTrades: trades.length,
     winningTrades: wins.length,
     losingTrades: losses.length,
@@ -201,49 +249,5 @@ export function runBacktest(
   };
 }
 
-//  Deterministic seeded RNG (mulberry32) for reproducible mocks
-function hashString(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-export function seededRandom(seed: string | number): () => number {
-  let t = typeof seed === "string" ? hashString(seed) : seed >>> 0;
-  return function () {
-    t += 0x6d2b79f5;
-    let r = Math.imul(t ^ (t >>> 15), t | 1);
-    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// Demo data generator (GBM) for quick testing without external API
-// Deterministic when `seed` is provided, defaults to hash of startDate for stability.
-export function generateMockOHLCV(days = 500, startPrice = 100, startDate = "2024-01-01", seed?: string | number): OHLCV[] {
-  const effectiveSeed = seed ?? process.env.MOCK_SEED ?? `mock:${startDate}:${startPrice}:${days}`;
-  const rand = seededRandom(effectiveSeed);
-  const out: OHLCV[] = [];
-  let p = startPrice;
-  const d = new Date(startDate);
-  for (let i=0;i<days;i++) {
-    const drift = 0.0002;
-    const vol = 0.015;
-    const shock = (rand()*2-1)*vol;
-    const change = drift + shock;
-    const open = p;
-    p = p * (1+change);
-    const high = Math.max(open,p)*(1+rand()*0.005);
-    const low = Math.min(open,p)*(1-rand()*0.005);
-    const close = p;
-    out.push({ timestamp: new Date(d).toISOString().slice(0,10), open, high, low, close, volume: 1_000_000 + rand()*500_000 });
-    d.setDate(d.getDate()+1);
-    // skip weekends
-    if (d.getDay()===6) d.setDate(d.getDate()+2);
-    if (d.getDay()===0) d.setDate(d.getDate()+1);
-  }
-  return out;
-}
+// Re-export mock helpers for backwards compat (prefer import from ./mock)
+export { generateMockOHLCV, seededRandom } from "./mock";

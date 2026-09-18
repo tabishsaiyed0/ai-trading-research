@@ -4,8 +4,19 @@ export const indicatorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("SMA"), period: z.number().int().min(2).max(500) }),
   z.object({ type: z.literal("EMA"), period: z.number().int().min(2).max(500) }),
   z.object({ type: z.literal("RSI"), period: z.number().int().min(2).max(100) }),
-  z.object({ type: z.literal("MACD"), fast: z.number().int(), slow: z.number().int(), signal: z.number().int() }),
-  z.object({ type: z.literal("BBANDS"), period: z.number().int(), stdDev: z.number() }),
+  z
+    .object({
+      type: z.literal("MACD"),
+      fast: z.number().int().min(2).max(100),
+      slow: z.number().int().min(2).max(500),
+      signal: z.number().int().min(2).max(100),
+    })
+    .refine((v) => v.slow > v.fast, { message: "MACD slow must be > fast", path: ["slow"] }),
+  z.object({
+    type: z.literal("BBANDS"),
+    period: z.number().int().min(2).max(500),
+    stdDev: z.number().min(0.5).max(4),
+  }),
 ]);
 
 export const conditionSchema = z.object({
@@ -37,8 +48,14 @@ export const strategySchema = z.object({
     type: z.enum(["percent_equity", "fixed", "kelly"]),
     value: z.number().positive(),
   }).default({ type: "percent_equity", value: 10 }),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+  startDate: z
+    .string()
+    .refine((v) => !isNaN(Date.parse(v)), { message: "startDate must be a valid date" })
+    .optional(),
+  endDate: z
+    .string()
+    .refine((v) => !isNaN(Date.parse(v)), { message: "endDate must be a valid date" })
+    .optional(),
 });
 
 export type Strategy = z.infer<typeof strategySchema>;
