@@ -1,4 +1,4 @@
-import type { BacktestResult, EquityPoint } from "@/lib/backtest/types";
+import type { BacktestResult, EquityPoint, Trade } from "@/lib/backtest/types";
 
 export type PerformanceMetric = {
   key: string;
@@ -63,4 +63,56 @@ export function getEquityRange(points: EquityPoint[]) {
     if (v > max) max = v;
   }
   return { min, max };
+}
+
+export type DrawdownPoint = { timestamp: string; drawdownPct: number };
+export type ReturnPoint = { timestamp: string; returnPct: number };
+export type TradePnlPoint = { index: number; pnl: number; label: string };
+export type MonthlyReturnPoint = { month: string; returnPct: number };
+
+export function getDrawdownSeries(points: EquityPoint[]): DrawdownPoint[] {
+  let peak = -Infinity;
+  return points.map((p) => {
+    if (p.equity > peak) peak = p.equity;
+    const dd = peak <= 0 ? 0 : ((peak - p.equity) / peak) * 100;
+    return { timestamp: p.timestamp, drawdownPct: dd };
+  });
+}
+
+export function getCumulativeReturnSeries(
+  points: EquityPoint[],
+  initialCapital: number
+): ReturnPoint[] {
+  if (!Number.isFinite(initialCapital) || initialCapital <= 0) {
+    return points.map((p) => ({ timestamp: p.timestamp, returnPct: 0 }));
+  }
+  return points.map((p) => ({
+    timestamp: p.timestamp,
+    returnPct: ((p.equity - initialCapital) / initialCapital) * 100,
+  }));
+}
+
+export function getTradePnlSeries(trades: Trade[]): TradePnlPoint[] {
+  return trades.map((t, i) => ({
+    index: i + 1,
+    pnl: t.pnl,
+    label: `#${i + 1}`,
+  }));
+}
+
+export function getMonthlyReturns(points: EquityPoint[]): MonthlyReturnPoint[] {
+  const buckets = new Map<string, { first: number; last: number }>();
+  for (const p of points) {
+    const month = p.timestamp.slice(0, 7);
+    if (!month) continue;
+    const b = buckets.get(month);
+    if (!b) buckets.set(month, { first: p.equity, last: p.equity });
+    else b.last = p.equity;
+  }
+  const out: MonthlyReturnPoint[] = [];
+  for (const [month, { first, last }] of buckets) {
+    if (first <= 0) continue;
+    out.push({ month, returnPct: ((last - first) / first) * 100 });
+  }
+  return out.sort((a, b) => (a.month < b.month ? -1 : 1));
 }

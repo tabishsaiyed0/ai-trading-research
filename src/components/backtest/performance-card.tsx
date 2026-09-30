@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BacktestResult } from "@/lib/backtest/types";
 import { getPrimaryMetrics, getSecondaryStats } from "@/lib/backtest/performance";
 import { StatTile } from "@/components/backtest/stat-tile";
-import { EquityCurve } from "@/components/backtest/equity-curve";
+import { PerformanceCharts } from "@/components/backtest/performance-charts";
 
 type PerformanceCardProps = {
   result: BacktestResult;
@@ -37,7 +37,7 @@ export function PerformanceCard({ result }: PerformanceCardProps) {
         </dl>
 
         <div className="mt-6">
-          <EquityCurve points={result.equityCurve} />
+          <PerformanceCharts result={result} />
         </div>
       </CardContent>
     </Card>
