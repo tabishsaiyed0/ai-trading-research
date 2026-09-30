@@ -1,14 +1,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BacktestResult } from "@/lib/backtest/types";
+import type { Strategy } from "@/lib/strategy/schema";
 import { getPrimaryMetrics, getSecondaryStats } from "@/lib/backtest/performance";
 import { StatTile } from "@/components/backtest/stat-tile";
 import { PerformanceCharts } from "@/components/backtest/performance-charts";
+import { ExportButtons } from "@/components/backtest/export-buttons";
 
 type PerformanceCardProps = {
   result: BacktestResult;
+  strategy?: Strategy | null;
 };
 
-export function PerformanceCard({ result }: PerformanceCardProps) {
+export function PerformanceCard({ result, strategy }: PerformanceCardProps) {
   const primaryMetrics = getPrimaryMetrics(result);
   const secondaryStats = getSecondaryStats(result);
 
@@ -16,6 +19,7 @@ export function PerformanceCard({ result }: PerformanceCardProps) {
     <Card>
       <CardHeader>
         <CardTitle>Performance — {result.strategyName}</CardTitle>
+        <ExportButtons result={result} strategy={strategy} />
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-3 gap-3">

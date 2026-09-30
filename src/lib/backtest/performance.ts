@@ -116,3 +116,45 @@ export function getMonthlyReturns(points: EquityPoint[]): MonthlyReturnPoint[] {
   }
   return out.sort((a, b) => (a.month < b.month ? -1 : 1));
 }
+
+function csvCell(v: string | number): string {
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export function tradesToCsv(trades: Trade[]): string {
+  const header = [
+    "index",
+    "entryTime",
+    "exitTime",
+    "entryPrice",
+    "exitPrice",
+    "qty",
+    "pnl",
+    "pnlPct",
+    "exitReason",
+    "barsHeld",
+  ];
+  const rows = trades.map((t, i) =>
+    [
+      i + 1,
+      t.entryTime,
+      t.exitTime,
+      t.entryPrice,
+      t.exitPrice,
+      t.qty,
+      t.pnl,
+      t.pnlPct,
+      t.exitReason,
+      t.barsHeld,
+    ]
+      .map(csvCell)
+      .join(",")
+  );
+  return [header.join(","), ...rows].join("\n");
+}
+
+export function equityCurveToCsv(points: EquityPoint[]): string {
+  const rows = points.map((p) => [p.timestamp, p.equity].map(csvCell).join(","));
+  return [["timestamp", "equity"].join(","), ...rows].join("\n");
+}

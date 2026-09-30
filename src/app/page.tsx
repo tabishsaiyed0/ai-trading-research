@@ -1,16 +1,28 @@
 "use client";
 import { useState } from "react";
 import type { Strategy } from "@/lib/strategy/schema";
+import { strategySchema } from "@/lib/strategy/schema";
 import type { BacktestResult } from "@/lib/backtest/types";
 import { DEFAULT_PROMPT, EXAMPLE_PROMPTS } from "@/lib/strategy/examples";
 import { AppHeader } from "@/components/layout/app-header";
 import { StrategyPromptCard } from "@/components/strategy/strategy-prompt-card";
 import { CompiledStrategyCard } from "@/components/strategy/compiled-strategy-card";
 import { ResultsPanel } from "@/components/backtest/results-panel";
+import { decodeStrategyParam } from "@/components/backtest/export-buttons";
 
 export default function Home() {
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
-  const [strategy, setStrategy] = useState<Strategy | null>(null);
+  const [strategy, setStrategy] = useState<Strategy | null>(() => {
+    try {
+      if (typeof window === "undefined") return null;
+      const param = new URLSearchParams(window.location.search).get("s");
+      if (!param) return null;
+      const parsed = strategySchema.safeParse(decodeStrategyParam(param));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  });
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState<"parse" | "backtest" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +85,7 @@ export default function Home() {
         </div>
 
         <div className="space-y-6">
-          <ResultsPanel result={result} />
+          <ResultsPanel result={result} strategy={strategy} />
         </div>
       </main>
     </div>
